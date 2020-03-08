@@ -6,168 +6,113 @@
 
 #include "engine.h"
 
-static size_t add_y_list (truss_t** tr, size_t x, size_t y)
+#define alive (int)0xFF
+#define death (int)0x00
+
+size_t width_G = 0;
+size_t height_G = 0;
+const png_byte color_type = PNG_COLOR_TYPE_GRAY;
+const png_byte bit_depth = 8;
+
+png_structp png_ptr;
+png_infop info_ptr;
+png_bytep *truss_ptrs;
+
+FILE *img_ptr;
+char *img_name;
+
+void rand_generation( size_t width, size_t height )
 {
-	if ( x > (*tr)->width ||
-		 y > (*tr)->height )
-		
-		return false;
-	
-	if ( (*tr) == NULL )
-		return false;
-	
-	if ( (*tr)->cols == NULL )
-		return false;
-		
-	while ( (*tr)->cols->next &&
-			(*tr)->cols->x != x )
-			
-		(*tr)->cols = (*tr)->cols->next;
-	
-		y_list_t* node = (y_list_t*)malloc( sizeof( y_list_t ));
-		
-		node->back = NULL;
-		node->next = NULL;
-		node->y = y;
-		node->status = alive;
-	
-		if ( (*tr)->cols->rows == NULL )
-			(*tr)->cols->rows = node;
-			
-		else
-		{
-			while ( (*tr)->cols->rows->next &&
-					(*tr)->cols->rows->y < y ) {
-				
-				(*tr)->cols->rows = (*tr)->cols->rows->next;
-			}			
-			
-			if ( (*tr)->cols->rows->y == y )
-				return false;
-			
-			if ( (*tr)->cols->rows->y < y &&
-				 (*tr)->cols->rows->next == NULL )
-			{
-				node->back = (*tr)->cols->rows;
-				(*tr)->cols->rows->next = node;
-				 	
-			} else if ( (*tr)->cols->rows->y > y &&
-						(*tr)->cols->rows->back == NULL )
-			{
-				node->next = (*tr)->cols->rows;
-				(*tr)->cols->rows->back = node;
-					
-			} else
-			{	
-				node->back = (*tr)->cols->rows->back;
-				node->next = (*tr)->cols->rows;
-				
-				((*tr)->cols->rows->back)->next = node;
-				(*tr)->cols->rows->back = node;
-				
-				(*tr)->cols->rows = node;
-				
-			}
-			
-			while ( (*tr)->cols->rows->back )
-				(*tr)->cols->rows = (*tr)->cols->rows->back;		
-		}
-		
-	++(*tr)->cols->y_count;
-	
-	while ( (*tr)->cols->back )
-		(*tr)->cols = (*tr)->cols->back;
-	
-	return true;
+    width_G = width;
+    height_G = height;
+
+    truss_ptrs = (png_bytep*)malloc( sizeof( png_bytep ) * width_G );
+
+    srand( time( NULL ));
+
+    size_t x, y;
+    for (x = 0; x < width_G; ++x)
+    {
+        truss_ptrs[x] = (png_byte*)malloc( sizeof( png_byte ) * height_G );
+
+        for (y = 0; y < height_G; ++y)
+        {
+            truss_ptrs[x][y] = rand() % 2 ? alive : death;
+        }
+    }
 }
 
-static void add_x_list (truss_t** tr)
+void load_generation( const char *file_name )
 {
-	size_t i;
-	for ( i = 0; i < (*tr)->width; ++i )
-	{
-		x_list_t* node = (x_list_t*)malloc( sizeof( x_list_t ));
-		
-		node->back = (*tr)->cols;
-		node->next = NULL;
-		node->x = i + 1;
-		node->y_count = 0;
-		node->rows = NULL;
-		
-		if ( (*tr)->cols )
-		{
-			while ( (*tr)->cols->next )
-				(*tr)->cols = (*tr)->cols->next;
-			
-			(*tr)->cols->next = node;
-		}
-		
-		(*tr)->cols = node;
-	}
-	
-	while ( (*tr)->cols->back )
-		(*tr)->cols = (*tr)->cols->back;
+
 }
 
-truss_t* new_truss (size_t width, size_t height)
+void save_generation( const char *file_name )
 {
-	if ( width == 0 || height == 0 )
-		return NULL;
-	
-	truss_t* tr = (truss_t*)malloc( sizeof (truss_t ));
-	tr->width = width;
-	tr->height = height;
-	tr->e_count = 0;
-	tr->cols = NULL;
-	
-	add_x_list( &tr );	
 
-	return tr;
 }
 
-truss_t* load_truss (char* file_name) {
-	
-}
-
-void rand_truss (truss_t** tr, size_t count)
+void next_generation( void )
 {
-	size_t width = (*tr)->width;
-	size_t height = (*tr)->height;
-	if ( count > width * height )
-		return;
-	
-	size_t i = 0;
-	while ( i < count )
-		if ( !add_y_list( tr,
-						  rand() % (*tr)->width + 1,
-						  rand() % (*tr)->height + 1 ))
-			++i;
+
 }
 
-
-
-static void del_y_list (y_list_t** yli, size_t x, size_t y)
+void drop_generation( void )
 {
-	
+    size_t x;
+    for (x = 0; x < width_G; x++)
+        free( truss_ptrs[x] );
+    free( truss_ptrs );
 }
 
-static void del_x_list (x_list_t** xli, size_t x)
+void open_image( const char *file_name )
 {
-	
+    img_ptr = fopen( file_name, "wb" );
+    if ( !img_ptr ) // log fail
+        logs( ERROR,
+            strjoin( "File ", strjoin( file_name, " couldn't be opened" )));
+    img_name = file_name;
 }
 
-void del_truss (truss_t** tr)
+void save_image( void )
 {
-	
+    png_ptr = png_create_write_struct( PNG_LIBPNG_VER_STRING, NULL, NULL, NULL );
+    if ( !png_ptr )  // log fail
+        logs( ERROR, "png_create_write_struct failed" );
+
+    info_ptr = png_create_info_struct( png_ptr );
+    if ( !info_ptr ) // log fail
+        logs( ERROR, "png_create_info_struct failed" );
+
+    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
+        logs( ERROR, "Error during init_io" );
+
+    png_init_io( png_ptr, img_ptr );
+
+    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
+        logs( ERROR, "Error during writing header" );
+
+    png_set_IHDR( png_ptr, info_ptr, height_G, width_G,
+                  bit_depth, color_type, PNG_INTERLACE_NONE,
+                  PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE );
+
+    png_write_info( png_ptr, info_ptr );
+
+    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
+        logs( ERROR, "Error during writing bytes" );
+
+    png_write_image( png_ptr, truss_ptrs );
+
+    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
+        logs( ERROR, "Error during end of write" );
+
+    png_write_end( png_ptr, NULL );
 }
 
-void next_generation (truss_t** tr)
+void close_image( void )
 {
-	
+    fclose( img_ptr );
+    if ( !img_ptr ) // log info
+        logs( ERROR,
+            strjoin( "File ", strjoin( img_name, " couldn't be closed" )));
 }
-
-void show_truss (truss_t *tr)
-{
-	
-}
-

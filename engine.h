@@ -4,51 +4,37 @@
  *
  */
 
+#pragma once
+
+#include "config.h"
+#include "log.h"
+#include "strs.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <time.h>
+#include <png.h>
 
-// typ dla komórki automatu
-typedef enum {dead, alive} exist_t;
+#ifndef _ENGINE_H_
+#define _ENGINE_H_
 
-typedef struct y_node {
-	struct y_node* back;
-	struct y_node* next;
-	
-	size_t y;
-	exist_t status:1;
-} y_list_t;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef struct x_node {
-	struct x_node* back;
-	struct x_node* next;
-	
-	size_t x;
-	size_t y_count;
-	y_list_t* rows; // wiersze numerowane od 1
-} x_list_t;
+    void rand_generation( size_t width, size_t height );
+    void load_generation( const char *file_name );
+    void save_generation( const char *file_name );
+    void next_generation( void );
+    void drop_generation( void );
 
-typedef struct truss {
-	size_t width;
-	size_t height;
-	
-	size_t e_count;
-	x_list_t* cols; // kolumny numerowane od 1
-} truss_t;
+    void open_image( const char *file_name );
+    void save_image( void );
+    void close_image( void );
 
-typedef struct node {
-	struct node* back;
-	struct node* next;
-	
-	size_t x;
-	size_t y;
-} position_t;
+#ifdef __cplusplus
+}
+#endif
 
-truss_t* new_truss (size_t width, size_t height);
-truss_t* load_truss (char* file_name);
-void del_truss (truss_t** tr);
-void rand_truss (truss_t** tr, size_t count);
-void next_generation (truss_t** tr);
-void show_truss (truss_t *tr);
-
+#endif
