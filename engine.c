@@ -21,39 +21,142 @@ png_bytep *truss_ptrs;
 FILE *img_ptr;
 char *img_name;
 
-void rand_generation( size_t width, size_t height )
+
+
+void initArray(Array *a, size_t initialSize) {
+    a->array = (int *)malloc(initialSize * sizeof(int));
+    a->used = 0;
+    a->size = initialSize;
+}
+
+void insertArray(Array *a, int x, int y) {
+    if (a->used == a->size) {
+        a->size *= 2;
+        a->array = (int *)realloc(a->array, a->size * sizeof(int));
+    }
+    a->array[a->used++] = x;
+    a->array[a->used++] = y;
+}
+
+void freeArray(Array *a) {
+    free(a->array);
+    a->array = NULL;
+    a->used = a->size = 0;
+}
+
+void allocate_mem(size_t width, size_t height)
 {
     width_G = width;
     height_G = height;
 
     truss_ptrs = (png_bytep*)malloc( sizeof( png_bytep ) * width_G );
 
-    srand( time( NULL ));
-
     size_t x, y;
     for (x = 0; x < width_G; ++x)
     {
         truss_ptrs[x] = (png_byte*)malloc( sizeof( png_byte ) * height_G );
 
-        for (y = 0; y < height_G; ++y)
-        {
-            truss_ptrs[x][y] = rand() % 2 ? alive : death;
-        }
+        for(y = 0; y < width_G; ++y)
+            truss_ptrs[x][y]=alive;
     }
+
+}
+
+void rand_generation()
+{
+    srand( time( NULL ));
+
+    size_t x, y;
+    for (x = 0; x < width_G; ++x)
+        for (y = 0; y < height_G; ++y)
+            truss_ptrs[x][y] = rand() % 14 ? alive : death;
 }
 
 void load_generation( const char *file_name )
 {
+    FILE *fp;
+    fp = fopen(file_name, "r");
+
+    int x, y;
+    if (fscanf(fp,"%d %d",&x, &y)==2)
+        allocate_mem(x,y);
+
+    while (fscanf(fp,"%d %d",&x, &y)==2)
+        truss_ptrs[x][y]=death;
 
 }
 
 void save_generation( const char *file_name )
 {
+    FILE * fp;
 
+    fp = fopen (file_name, "w+");
+    fprintf(fp, "%d %d \n", width_G, height_G);
+    size_t x, y;
+    for (x = 0; x < width_G; ++x)
+        for(y = 0; y < width_G; ++y)
+            if(truss_ptrs[x][y]==death)
+                fprintf(fp, "%d %d \n", x,y);
+    fclose(fp);
 }
 
-void next_generation( void )
+int count_neigbours(size_t x, size_t y)
 {
+    int neighbours = 0;
+    if( x > 0)
+    {
+        if( truss_ptrs[x-1][y]==death)      neighbours++;
+
+        if(y>0)
+            if( truss_ptrs[x-1][y-1]==death)    neighbours++;
+        if(y+1<height_G)
+            if( truss_ptrs[x-1][y+1]==death)    neighbours++;
+    }
+
+    if( x+1 < width_G)
+    {
+        if( truss_ptrs[x+1][y]==death)      neighbours++;
+
+        if(y > 0)
+            if( truss_ptrs[x+1][y-1]==death)    neighbours++;
+        if( y+1 < height_G)
+            if( truss_ptrs[x+1][y+1]==death)    neighbours++;
+    }
+
+    if( y > 0)
+        if( truss_ptrs[x][y-1]==death)      neighbours++;
+    if( y+1 < height_G)
+        if( truss_ptrs[x][y+1]==death)      neighbours++;
+
+    return neighbours;
+}
+
+
+void next_generation( Array *a )
+{
+    size_t x, y;
+    for (x = 0; x < width_G; ++x)
+    {
+        for (y = 0; y < height_G; ++y)
+        {
+            int neighbours = count_neigbours(x,y);
+
+            if(truss_ptrs[x][y]==alive && neighbours==3)
+                insertArray(a, x, y);
+
+            if(truss_ptrs[x][y]==death && (neighbours!=3 && neighbours!=2))
+                insertArray(a, x, y);
+        }
+    }
+
+    for(size_t i=0; i < a->used; i+=2)
+    {
+        if(truss_ptrs[a->array[i]][a->array[i+1]]==alive)
+            truss_ptrs[a->array[i]][a->array[i+1]]=death;
+        else
+            truss_ptrs[a->array[i]][a->array[i+1]]=alive;
+    }
+    a->used=0;
 
 }
 

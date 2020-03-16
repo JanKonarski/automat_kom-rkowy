@@ -22,11 +22,22 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+    typedef struct {
+    int *array;
+    size_t used;
+    size_t size;
+    } Array;
 
-    void rand_generation( size_t width, size_t height );
+    void initArray(Array *a, size_t initialSize);
+    void insertArray(Array *a, int x, int y);
+    void freeArray(Array *a);
+
+    int count_neigbours(size_t x, size_t y);
+    void allocate_mem(size_t width, size_t height);
+    void rand_generation();
     void load_generation( const char *file_name );
     void save_generation( const char *file_name );
-    void next_generation( void );
+    void next_generation( Array *a );
     void drop_generation( void );
 
     void open_image( const char *file_name );
