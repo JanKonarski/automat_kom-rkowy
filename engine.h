@@ -9,6 +9,7 @@
 #include "config.h"
 #include "log.h"
 #include "strs.h"
+#include "array.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,15 +23,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-    typedef struct {
-    int *array;
-    size_t used;
-    size_t size;
-    } Array;
 
-    void initArray(Array *a, size_t initialSize);
-    void insertArray(Array *a, int x, int y);
-    void freeArray(Array *a);
+
 
     int count_neigbours(size_t x, size_t y);
     void allocate_mem(size_t width, size_t height);
