@@ -1,199 +1,605 @@
-/*
- *
- * Autor: Jan Konarski
- *
- */
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "engine.h"
+#include "strs.h"
 
-#define alive (int)0xFF
-#define death (int)0x00
+typedef unsigned char uchar8_t;
 
-size_t width_G = 0;
-size_t height_G = 0;
-const png_byte color_type = PNG_COLOR_TYPE_GRAY;
-const png_byte bit_depth = 8;
+#define death (char)0xFF
+#define alive (char)0x00
 
-png_structp png_ptr;
-png_infop info_ptr;
-png_bytep *truss_ptrs;
+char *kernelSRC =
+	"char get( __global uchar *arr, uint x, uint y, uint width, uint height) {" \
+	"	if (x < 0 || y < 0 || x >= width || y >= height) return 0xFF;" \
+	"	else return arr[y * width + x];" \
+	"}" \
+	"" \
+	"__kernel void process(__global uchar *A, __global uchar *B, uint width, uint height) {" \
+	"	uint index = get_global_id(0);" \
+	"	uint y = (uint)(index / width);" \
+	"	uint x = (uint)(index - y*height);" \
+	"	char count = 0;" \
+	"	" \
+	"	if (!get(A, x-1, y-1, width, height)) count++;" \
+	"	if (!get(A, x-1, y, width, height)) count++;" \
+	"	if (!get(A, x-1, y+1, width, height)) count++;" \
+	"	if (!get(A, x, y-1, width, height)) count++;" \
+	"	if (!get(A, x, y+1, width, height)) count++;" \
+	"	if (!get(A, x+1, y-1, width, height)) count++;" \
+	"	if (!get(A, x+1, y, width, height)) count++;" \
+	"	if (!get(A, x+1, y+1, width, height)) count++;" \
+	"	" \
+	"	if (count == 3) B[index] = 0x00;" \
+	"	else B[index] = 0xFF;" \
+	"}";
+// "	B[i] = 0xFF;" \
 
-FILE *img_ptr;
-char *img_name;
+static uchar8_t count_neighbours ( uchar8_t **arr,
+								   uint32_t x,
+								   uint32_t y,
+								   uint32_t width,
+								   uint32_t height );
+static int32_t gen_nextCL ( gen_t **generation );
+static int32_t gen_setCL ( gen_t **generation );
 
-
-void allocate_mem(size_t width, size_t height)
+int gen_create ( gen_t **generation,
+				 uint32_t width,
+				 uint32_t height )
 {
-    width_G = width;
-    height_G = height;
+	if ( (*generation) )
+		return GEN_OBJECT_NOT_NULL;
 
-    truss_ptrs = (png_bytep*)malloc( sizeof( png_bytep ) * width_G );
+	(*generation) = (gen_t*)malloc( sizeof( gen_t ));
 
-    size_t x, y;
-    for (x = 0; x < width_G; ++x)
-    {
-        truss_ptrs[x] = (png_byte*)malloc( sizeof( png_byte ) * height_G );
+	if ( !(*generation) )
+		return GEN_CREATE_FAILURE;
+	
+	uint32_t i;
+	uint32_t k;
 
-        for(y = 0; y < width_G; ++y)
-            truss_ptrs[x][y]=alive;
-    }
+	(*generation)->position = 0;
 
+	(*generation)->width = width;
+	(*generation)->height = height;
+	(*generation)->png_ptr = NULL;
+	(*generation)->info_ptr = NULL;
+
+	(*generation)->arrayA = NULL;
+	(*generation)->arrayB = NULL;
+
+	(*generation)->arrayA = (png_bytep*)malloc( sizeof( png_bytep ) * height );
+	(*generation)->arrayB = (png_bytep*)malloc( sizeof( png_bytep ) * height );
+	if ( !(*generation)->arrayA || !(*generation)->arrayB )
+		return 0xff;
+
+	for (i = 0; i < height; i++)
+	{
+		(*generation)->arrayA[i] = (png_bytep)malloc( sizeof( png_byte ) * width );
+		(*generation)->arrayB[i] = (png_bytep)malloc( sizeof( png_byte ) * width );
+
+		for ( k = 0; k < width; k++ )
+		{
+			(*generation)->arrayA[i][k] = death;
+			(*generation)->arrayB[i][k] = death;
+		}
+	}
+
+	(*generation)->color_type = PNG_COLOR_TYPE_GRAY;
+	(*generation)->bit_depth = 8;
+	(*generation)->img_ptr = NULL;
+
+	(*generation)->platformNums = 0;
+	(*generation)->platformIds = NULL;
+	(*generation)->deviceNums = 0;
+	(*generation)->deviceIds = NULL;
+	(*generation)->context = NULL;
+	(*generation)->queue = NULL;
+	(*generation)->program = NULL;
+	(*generation)->kernelSrc = NULL;
+	(*generation)->kernel = NULL;
+	(*generation)->arrA = NULL;
+	(*generation)->bufferA = NULL;
+	(*generation)->arrB = NULL;
+	(*generation)->bufferB = NULL;
+
+	return GEN_SUCCESS;
 }
 
-void rand_generation()
+int gen_destroy ( gen_t *generation )
 {
-    srand( time( NULL ));
+	if ( !generation )
+		return -0xff;
 
-    size_t x, y;
-    for (x = 0; x < width_G; ++x)
-        for (y = 0; y < height_G; ++y)
-            truss_ptrs[x][y] = rand() % 14 ? alive : death;
+	uint32_t i;
+	uint32_t k;
+
+	for ( i = 0; i < generation->height; i++ )
+	{
+		free( generation->arrayA[i] );
+		free( generation->arrayB[i] );
+	}
+	free( generation->arrayA );
+	free( generation->arrayB );
+
+	free( generation->arrA );
+	free( generation->arrB );
+
+	cl_int error;
+
+	if ( !generation->queue )
+		clFlush( generation->queue );
+
+	if ( !generation->queue)
+		clFinish( generation->queue );
+
+	if ( !generation->deviceIds)
+		clReleaseDevice( generation->deviceIds );
+
+	if ( !generation->kernel)
+		clReleaseKernel( generation->kernel );
+
+	if ( !generation->program)
+		clReleaseProgram( generation->program );
+
+	if ( !generation->context)
+		clReleaseContext( generation->context );
+
+	if ( !generation->bufferA)
+		clReleaseMemObject( generation->bufferA );
+
+	if ( !generation->bufferB)
+		clReleaseMemObject( generation->bufferB );
+
+	if ( !generation->queue)
+		clReleaseCommandQueue( generation->queue );
+
+//	free( generation->platformIds );
+//	free( generation->deviceIds );
+
+	free( generation );
+
+	return GEN_SUCCESS;
 }
 
-void load_generation( const char *file_name )
+int gen_load ( gen_t **generation,
+			   char *fileName )
 {
-    FILE *fp;
-    fp = fopen(file_name, "r");
+	if ( (*generation))
+		return GEN_OBJECT_NOT_NULL;
 
-    int x, y;
-    if (fscanf(fp,"%d %d",&x, &y)==2)
-        allocate_mem(x,y);
+	FILE* fp = fopen( fileName, "r" );
+	if ( !fp )
+		return 0xff;
 
-    while (fscanf(fp,"%d %d",&x, &y)==2)
-        truss_ptrs[x][y]=death;
+	uint32_t width;
+	uint32_t height;
+	fscanf( fp, "%d %d\n", &width, &height );
 
+	gen_create( &(*generation), width, height );
+
+	int32_t x;
+	int32_t y;
+	while ( fscanf( fp, "%d %d\n", &x, &y ) == 2)
+		(*generation)->arrayA[y][x] = alive;
+
+	fclose( fp );
+
+	return GEN_SUCCESS;
 }
 
-void save_generation( const char *file_name )
+int gen_save ( gen_t *generation,
+			   char *fileName )
 {
-    FILE * fp;
+	if ( !generation )
+		return GEN_OBJECT_NOT_NULL;
 
-    fp = fopen (file_name, "w+");
-    fprintf(fp, "%d %d \n", width_G, height_G);
-    size_t x, y;
-    for (x = 0; x < width_G; ++x)
-        for(y = 0; y < width_G; ++y)
-            if(truss_ptrs[x][y]==death)
-                fprintf(fp, "%d %d \n", x,y);
-    fclose(fp);
+	FILE* fp = fopen( fileName, "w" );
+	if ( !fp )
+		return 0xff;
+
+	fprintf( fp, "%d %d \n", generation->width, generation->height );
+
+	uint32_t x, y;
+	for ( x = 0; x < generation->width; x++ )
+		for ( y = 0; y < generation->height; y++ )
+			if (( !generation->position ? generation->arrayA[y][x] : generation->arrayB[y][x] ) == alive )
+				fprintf(fp, "%d %d \n", x, y);
+
+	fclose( fp );
+
+	return GEN_SUCCESS;
 }
 
-int count_neigbours(size_t x, size_t y)
+int gen_image ( gen_t *generation,
+				char *fileName )
 {
-    int neighbours = 0;
-    if( x > 0)
-    {
-        if( truss_ptrs[x-1][y]==death)      neighbours++;
+	if ( !generation )
+		return 0xff;
 
-        if(y>0)
-            if( truss_ptrs[x-1][y-1]==death)    neighbours++;
-        if(y+1<height_G)
-            if( truss_ptrs[x-1][y+1]==death)    neighbours++;
-    }
+	generation->img_ptr = fopen( fileName, "wb" );
+	if ( !generation->img_ptr )
+		return 0xfe;
 
-    if( x+1 < width_G)
-    {
-        if( truss_ptrs[x+1][y]==death)      neighbours++;
+	generation->png_ptr = png_create_write_struct( PNG_LIBPNG_VER_STRING, NULL, NULL, NULL );
+	if ( !generation->png_ptr )
+		return 0xfd;
 
-        if(y > 0)
-            if( truss_ptrs[x+1][y-1]==death)    neighbours++;
-        if( y+1 < height_G)
-            if( truss_ptrs[x+1][y+1]==death)    neighbours++;
-    }
+	generation->info_ptr = png_create_info_struct( generation->png_ptr );
+	if ( !generation->info_ptr )
+		return 0xfc;
 
-    if( y > 0)
-        if( truss_ptrs[x][y-1]==death)      neighbours++;
-    if( y+1 < height_G)
-        if( truss_ptrs[x][y+1]==death)      neighbours++;
+	if ( setjmp( png_jmpbuf( generation->png_ptr )))
+		return 0xfb;
 
-    return neighbours;
+	png_init_io ( generation->png_ptr,
+				  generation->img_ptr );
+
+	if ( setjmp( png_jmpbuf( generation->png_ptr )))
+		return 0xfa;
+
+	png_set_IHDR( generation->png_ptr,
+				  generation->info_ptr,
+				  generation->width,
+				  generation->height,
+				  generation->bit_depth,
+				  generation->color_type,
+				  PNG_INTERLACE_NONE,
+				  PNG_COMPRESSION_TYPE_BASE,
+				  PNG_FILTER_TYPE_BASE );
+
+	png_write_info ( generation->png_ptr,
+					 generation->info_ptr );
+
+	if ( setjmp( png_jmpbuf ( generation->png_ptr )))
+		return 0xef;
+
+	png_write_image ( generation->png_ptr,
+					  !generation->position ? 
+							generation->arrayA :
+							generation->arrayB );
+
+	png_write_image ( generation->png_ptr,
+					  generation->arrayA );
+
+	if ( setjmp( png_jmpbuf ( generation->png_ptr )))
+		return 0xee;
+
+	png_write_end ( generation->png_ptr, NULL );
+
+    fclose ( generation->img_ptr );
+
+	return GEN_SUCCESS;
 }
 
-
-void next_generation( Array *a )
+int gen_next ( gen_t **generation,
+			   wcl cl)
 {
-    size_t x, y;
-    for (x = 0; x < width_G; ++x)
-    {
-        for (y = 0; y < height_G; ++y)
-        {
-            int neighbours = count_neigbours(x,y);
+	if ( !(*generation) )
+		return 0xff;
 
-            if(truss_ptrs[x][y]==alive && neighbours==3)
-                insertArray(a, x, y);
+	if ( cl == WITH_CL )
+		return gen_nextCL ( generation );
 
-            if(truss_ptrs[x][y]==death && (neighbours!=3 && neighbours!=2))
-                insertArray(a, x, y);
-        }
-    }
+	uint32_t x, y;
+	for ( x = 0; x < (*generation)->width; x++ )
+		for ( y = 0; y < (*generation)->height; y++ )
+		{
+			uchar8_t neighbours = count_neighbours( !(*generation)->position ?
+														(*generation)->arrayA :
+														(*generation)->arrayB,
+													x,
+													y,
+													(*generation)->width,
+													(*generation)->height );
 
-    for(size_t i=0; i < a->used; i+=2)
-    {
-        if(truss_ptrs[a->array[i]][a->array[i+1]]==alive)
-            truss_ptrs[a->array[i]][a->array[i+1]]=death;
-        else
-            truss_ptrs[a->array[i]][a->array[i+1]]=alive;
-    }
-    a->used=0;
+			if ( (*generation)->position )
+				(*generation)->arrayA[y][x] = neighbours == 3 ? alive : death;
+			else
+				(*generation)->arrayB[y][x] = neighbours == 3 ? alive : death; 
+		}
+	(*generation)->position++;
 
+	return GEN_SUCCESS;
 }
 
-void drop_generation( void )
+static uchar8_t count_neighbours( uchar8_t **arr,
+								  uint32_t x,
+								  uint32_t y,
+								  uint32_t width,
+								  uint32_t height )
 {
-    size_t x;
-    for (x = 0; x < width_G; x++)
-        free( truss_ptrs[x] );
-    free( truss_ptrs );
+	uchar8_t count = 0;
+
+	uint32_t k, l;
+	
+	uint32_t kMin = (int32_t)(x - 1) > 0 ? (x - 1) : 0;
+	uint32_t kMax = (int32_t)(x + 1) < width ? (x + 2) : (x + 1);
+
+	uint32_t lMin = (int32_t)(y - 1) > 0 ? (y - 1) : 0;
+	uint32_t lMax = (int32_t)(y + 1) < height ? (y + 2) : (y + 1);
+
+	for ( k = kMin; k < kMax; k++ )
+		for ( l = lMin; l < lMax; l++ )
+			if ( k != x || l != y )
+				if ( arr[l][k] == alive )
+					count++;
+
+
+	return count;
 }
 
-void open_image( const char *file_name )
+static int32_t gen_nextCL ( gen_t **generation )
 {
-    img_ptr = fopen( file_name, "wb" );
-    if ( !img_ptr ) // log fail
-        logs( ERROR,
-            strjoin( "File ", strjoin( file_name, " couldn't be opened" )));
-    img_name = file_name;
+	if ( !(*generation) )
+		return 0xff;
+
+	if ( !(*generation)->platformIds ||
+		 !(*generation)->deviceIds ||
+		 !(*generation)->context ||
+		 !(*generation)->queue ||
+		 !(*generation)->program ||
+		 !(*generation)->kernelSrc ||
+		 !(*generation)->kernel ||
+		 !(*generation)->bufferA ||
+		 !(*generation)->bufferB )
+	{
+		uint32_t erro = GEN_SUCCESS;
+		erro = gen_setCL( generation );
+		if ( erro )
+			return erro;
+	}
+
+	cl_int erro = CL_SUCCESS;
+
+	size_t size = (*generation)->width * (*generation)->height;
+	size_t localWorkSize = 1;
+
+	erro = clEnqueueNDRangeKernel ( (*generation)->queue,
+									(*generation)->kernel,
+									1, NULL,
+									&size, &localWorkSize,
+									0, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	erro = clEnqueueReadBuffer ( (*generation)->queue,
+								 (*generation)->bufferA,
+								 CL_TRUE, 0,
+								 sizeof( png_byte ) * size,
+								 (*generation)->arrB,
+								 0, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	{
+		size_t x, y;
+		for ( x = 0; x < (*generation)->width; x++ )
+			for ( y = 0; y < (*generation)->height; y++ )
+				(*generation)->arrayB[y][x] =
+						(*generation)->arrB[y * (*generation)->width + x];
+	}
+
+	erro = clEnqueueReadBuffer ( (*generation)->queue,
+								 (*generation)->bufferB,
+								 CL_TRUE, 0,
+								 sizeof( png_byte ) * size,
+								 (*generation)->arrA,
+								 0, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	{
+		size_t x, y;
+		for ( x = 0; x < (*generation)->width; x++ )
+			for ( y = 0; y < (*generation)->height; y++ )
+				(*generation)->arrayA[y][x] =
+				(*generation)->arrA[y * (*generation)->width + x];
+	}
+
+	return GEN_SUCCESS;
 }
 
-void save_image( void )
+static int32_t gen_setCL ( gen_t **generation )
 {
-    png_ptr = png_create_write_struct( PNG_LIBPNG_VER_STRING, NULL, NULL, NULL );
-    if ( !png_ptr )  // log fail
-        logs( ERROR, "png_create_write_struct failed" );
+	if ( !(*generation) )
+		return 0xf0;
+	
+	cl_int erro = CL_SUCCESS;
+	uint32_t i;
+	char name[1024] = { '\0' };
 
-    info_ptr = png_create_info_struct( png_ptr );
-    if ( !info_ptr ) // log fail
-        logs( ERROR, "png_create_info_struct failed" );
+	erro = clGetPlatformIDs ( 0, NULL, &(*generation)->platformNums );
+	if ( erro || !(*generation)->platformNums )
+		return erro;
 
-    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
-        logs( ERROR, "Error during init_io" );
+	(*generation)->platformIds = (cl_platform_id*)malloc( sizeof ( cl_platform_id ) * (*generation)->platformNums );
+	erro = clGetPlatformIDs ( (*generation)->platformNums, (*generation)->platformIds, NULL );
+	if ( erro )
+		return erro;
 
-    png_init_io( png_ptr, img_ptr );
+	for ( i = 0; i < (*generation)->platformNums; i++ )
+	{
+		printf ( "Platform:\t%u \n", i );
 
-    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
-        logs( ERROR, "Error during writing header" );
+		erro = clGetPlatformInfo ( (*generation)->platformIds[i], CL_PLATFORM_NAME, 1024, &name, NULL );
+		printf ( "Name:\t\t%s \n", erro ? "null" : name );
 
-    png_set_IHDR( png_ptr, info_ptr, height_G, width_G,
-                  bit_depth, color_type, PNG_INTERLACE_NONE,
-                  PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE );
+		erro = clGetPlatformInfo ( (*generation)->platformIds[i], CL_PLATFORM_VENDOR, 1024, &name, NULL );
+		printf ( "Vendor:\t\t%s \n\n", erro ? "null" : name );
+	}
 
-    png_write_info( png_ptr, info_ptr );
+	cl_int platform = 0;
+	printf ( "Choose the platform: " );
+	scanf ( "%d", &platform );
+	if ( platform > (*generation)->platformNums )
+		platform = 0;
+	printf ( "-------------------------------------\n\n" );
 
-    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
-        logs( ERROR, "Error during writing bytes" );
+	erro = clGetDeviceIDs( (*generation)->platformIds[platform],
+						   CL_DEVICE_TYPE_ALL, 0, NULL,
+						   &(*generation)->deviceNums );
+	if ( erro || !(*generation)->deviceNums )
+		return erro;
 
-    png_write_image( png_ptr, truss_ptrs );
+	(*generation)->deviceIds = (cl_device_id*)malloc ( sizeof ( cl_device_id ) * (*generation)->deviceNums );
+	erro = clGetDeviceIDs ( (*generation)->platformIds[platform],
+							CL_DEVICE_TYPE_ALL,
+							(*generation)->deviceNums,
+							(*generation)->deviceIds,
+							&(*generation)->deviceNums );
+	if ( erro )
+		return erro;
 
-    if ( setjmp( png_jmpbuf( png_ptr ))) // log fail
-        logs( ERROR, "Error during end of write" );
+	for ( i = 0; i < (*generation)->deviceNums; ++i )
+	{
+		printf ( "Device:\t\t%u \n", i );
 
-    png_write_end( png_ptr, NULL );
-}
+		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_NAME, 1024, &name, NULL );
+		printf ( "Name:\t\t%s \n", erro ? "null" : name );
 
-void close_image( void )
-{
-    fclose( img_ptr );
-    if ( !img_ptr ) // log info
-        logs( ERROR,
-            strjoin( "File ", strjoin( img_name, " couldn't be closed" )));
+		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_VENDOR, 1024, &name, NULL );
+		printf ( "Vendor:\t\t%s \n", erro ? "null" : name );
+
+		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_VERSION, 1024, &name, NULL );
+		printf ( "Version:\t%s \n\n", erro ? "null" : name );
+	}
+
+	cl_int device = 0;
+	printf ( "Choose the platform: " );
+	scanf ( "%d", &device );
+	if ( device > (*generation)->deviceNums )
+		device = 0;
+	printf("-------------------------------------\n\n");
+	
+	(*generation)->context = clCreateContext ( NULL, (*generation)->deviceNums,
+											   (*generation)->deviceIds,
+											   NULL, NULL, &erro );
+	if ( erro )
+		return erro;
+	
+	(*generation)->queue = clCreateCommandQueue ( (*generation)->context, (*generation)->deviceIds[device], 0, &erro );
+	if ( erro )
+		return erro;
+	
+	{
+		(*generation)->arrA = (png_byte*)malloc( sizeof( png_byte ) *
+												(*generation)->width *
+												(*generation)->height);
+
+		size_t x, y;
+		for ( x = 0; x < (*generation)->width; x++ )
+			for ( y = 0; y < (*generation)->height; y++ )
+				(*generation)->arrA[y * (*generation)->width + x] =
+						(*generation)->arrayA[y][x];
+	}
+
+	(*generation)->bufferA = clCreateBuffer ( (*generation)->context,
+											  CL_MEM_READ_WRITE,
+											  sizeof( png_byte ) * 
+													(size_t)(*generation)->width * 
+													(size_t)(*generation)->height,
+											  NULL,
+											  &erro );
+	if ( erro )
+		return erro;
+
+	{
+		(*generation)->arrB = (png_byte*)malloc( sizeof( png_byte ) *
+												 (*generation)->width *
+												 (*generation)->height);
+
+		size_t x, y;
+		for ( x = 0; x < (*generation)->width; x++ )
+			for ( y = 0; y < (*generation)->height; y++ )
+				(*generation)->arrB[y * (*generation)->width + x] =
+						(*generation)->arrayB[y][x];
+	}
+
+	(*generation)->bufferB = clCreateBuffer ( (*generation)->context,
+											  CL_MEM_READ_WRITE,
+											  sizeof(png_byte) *
+													(*generation)->width *
+													(*generation)->height,
+											  NULL,
+											  &erro);
+	if ( erro )
+		return erro;
+/*
+	FILE* fp = NULL;
+	fp = fopen ( "_kernel.cl.txt", "r" );
+	if (!fp) // b³¹d, nie wczytuje pliku
+		return 0xfff;
+
+	fseek ( fp, 0, SEEK_END );
+	long length = ftell ( fp );
+	fseek ( fp, 0, SEEK_SET );
+	(*generation)->kernelSrc = (char*)malloc ( length + 1 );
+printf("kernelSrc length: %ld \n", length);
+	if ( (*generation)->kernelSrc )
+		fread ( (*generation)->kernelSrc, 1, length, fp );
+	else
+		return 0xffff;
+	fclose ( fp );
+*/
+	(*generation)->kernelSrc = kernelSRC;
+	size_t kernelSrcLength = strlen ( (*generation)->kernelSrc );
+
+	(*generation)->program = clCreateProgramWithSource ( (*generation)->context, 1,
+														 (const char**)&(*generation)->kernelSrc,
+														 (const size_t*)&kernelSrcLength,
+														 &erro );
+	if ( erro )
+		return erro;
+
+	erro = clBuildProgram ( (*generation)->program,
+							(*generation)->deviceNums,
+							(*generation)->deviceIds,
+							NULL, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	(*generation)->kernel = clCreateKernel ( (*generation)->program, "process", &erro );
+	if ( erro )
+		return erro;
+
+	erro = clSetKernelArg ( (*generation)->kernel, 0, sizeof(cl_mem), (void*)&(*generation)->bufferA );
+	if ( erro )
+		return erro;
+
+	erro = clSetKernelArg ( (*generation)->kernel, 1, sizeof(cl_mem), (void*)&(*generation)->bufferB );
+	if ( erro )
+		return erro;
+	
+	erro = clSetKernelArg ( (*generation)->kernel, 2, sizeof(png_uint_32), (void*)&(*generation)->width );
+	if ( erro )
+		return erro;
+	
+	erro = clSetKernelArg ( (*generation)->kernel, 3, sizeof(png_uint_32), (void*)&(*generation)->height );
+	if (erro)
+		return erro;
+
+	erro = clEnqueueWriteBuffer ( (*generation)->queue,
+								  (*generation)->bufferA,
+								  CL_FALSE, 0,
+								  sizeof(png_byte) *
+										(*generation)->width *
+										(*generation)->height,
+								  (*generation)->arrA,
+								  0, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	erro = clEnqueueWriteBuffer ( (*generation)->queue,
+								  (*generation)->bufferA,
+								  CL_FALSE, 0,
+								  sizeof(png_byte) *
+										(*generation)->width *
+										(*generation)->height,
+								  (*generation)->arrA,
+								  0, NULL, NULL);
+	if ( erro )
+		return erro;
+
+	return GEN_SUCCESS;
 }
