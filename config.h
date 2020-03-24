@@ -1,6 +1,7 @@
 /*
  *
  * Autor: Jan Konarski
+ * Autor: Maciek Ko³ek
  *
  */
 

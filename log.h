@@ -3,13 +3,20 @@
  * Autor: Jan Konarski
  *
  */
-
-#pragma once
+ /*
+  *
+  * Autor: Jan Konarski
+  * Autor: Maciek Ko³ek
+  *
+  */
 
 #include "config.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+#include <stdbool.h>
+#include <string.h>
 
 #ifndef _LOG_H_
 #define _LOG_H_

@@ -1,5 +1,13 @@
+/*
+ *
+ * Autor: Jan Konarski
+ * Autor: Maciek Ko³ek
+ *
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "engine.h"
 #include "strs.h"
@@ -33,7 +41,6 @@ char *kernelSRC =
 	"	if (count == 3) B[index] = 0x00;" \
 	"	else B[index] = 0xFF;" \
 	"}";
-// "	B[i] = 0xFF;" \
 
 static uchar8_t count_neighbours ( uchar8_t **arr,
 								   uint32_t x,
@@ -43,7 +50,7 @@ static uchar8_t count_neighbours ( uchar8_t **arr,
 static int32_t gen_nextCL ( gen_t **generation );
 static int32_t gen_setCL ( gen_t **generation );
 
-int gen_create ( gen_t **generation,
+static int gen_create ( gen_t **generation,
 				 uint32_t width,
 				 uint32_t height )
 {
@@ -158,6 +165,27 @@ int gen_destroy ( gen_t *generation )
 //	free( generation->deviceIds );
 
 	free( generation );
+
+	return GEN_SUCCESS;
+}
+
+int gen_rand ( gen_t **generation,
+			   uint32_t width,
+			   uint32_t height )
+{
+	if ( (*generation) )
+		return GEN_OBJECT_NOT_NULL;
+
+	gen_create( generation, width, height );
+
+	srand(time(NULL));
+	int r = rand() % (width * height / 2) + 1;
+	int i = 0;
+	while (i++ < r)
+		(*generation)->arrayA
+				[rand() % height + 1]
+				[rand() % width + 1] =
+			alive;
 
 	return GEN_SUCCESS;
 }
@@ -351,8 +379,34 @@ static int32_t gen_nextCL ( gen_t **generation )
 	}
 
 	cl_int erro = CL_SUCCESS;
+	size_t size = (size_t)(*generation)->width * (size_t)(*generation)->height;
 
-	size_t size = (*generation)->width * (*generation)->height;
+	erro = clEnqueueWriteBuffer( (*generation)->queue,
+								 (*generation)->bufferA,
+								 CL_FALSE, 0,
+								 sizeof(png_byte) *
+										(*generation)->width *
+										(*generation)->height,
+								(*generation)->position ?
+										(*generation)->arrB :
+										(*generation)->arrA,
+								0, NULL, NULL);
+	if (erro)
+		return erro;
+
+	erro = clEnqueueWriteBuffer( (*generation)->queue,
+								 (*generation)->bufferB,
+								 CL_FALSE, 0,
+								 sizeof(png_byte) * 
+										(*generation)->width *
+										(*generation)->height,
+								 (*generation)->position ?
+										(*generation)->arrA :
+										(*generation)->arrB,
+								 0, NULL, NULL);
+	if (erro)
+		return erro;
+
 	size_t localWorkSize = 1;
 
 	erro = clEnqueueNDRangeKernel ( (*generation)->queue,
@@ -367,23 +421,6 @@ static int32_t gen_nextCL ( gen_t **generation )
 								 (*generation)->bufferA,
 								 CL_TRUE, 0,
 								 sizeof( png_byte ) * size,
-								 (*generation)->arrB,
-								 0, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	{
-		size_t x, y;
-		for ( x = 0; x < (*generation)->width; x++ )
-			for ( y = 0; y < (*generation)->height; y++ )
-				(*generation)->arrayB[y][x] =
-						(*generation)->arrB[y * (*generation)->width + x];
-	}
-
-	erro = clEnqueueReadBuffer ( (*generation)->queue,
-								 (*generation)->bufferB,
-								 CL_TRUE, 0,
-								 sizeof( png_byte ) * size,
 								 (*generation)->arrA,
 								 0, NULL, NULL );
 	if ( erro )
@@ -394,8 +431,28 @@ static int32_t gen_nextCL ( gen_t **generation )
 		for ( x = 0; x < (*generation)->width; x++ )
 			for ( y = 0; y < (*generation)->height; y++ )
 				(*generation)->arrayA[y][x] =
-				(*generation)->arrA[y * (*generation)->width + x];
+						(*generation)->arrA[y * (*generation)->width + x];
 	}
+
+
+	erro = clEnqueueReadBuffer ( (*generation)->queue,
+								 (*generation)->bufferB,
+								 CL_TRUE, 0,
+								 sizeof( png_byte ) * size,
+								 (*generation)->arrB,
+								 0, NULL, NULL );
+	if ( erro )
+		return erro;
+
+	{
+		size_t x, y;
+		for ( x = 0; x < (*generation)->width; x++ )
+			for ( y = 0; y < (*generation)->height; y++ )
+				(*generation)->arrayB[y][x] =
+				(*generation)->arrB[y * (*generation)->width + x];
+	}
+
+	(*generation)->position++;
 
 	return GEN_SUCCESS;
 }
@@ -525,23 +582,7 @@ static int32_t gen_setCL ( gen_t **generation )
 											  &erro);
 	if ( erro )
 		return erro;
-/*
-	FILE* fp = NULL;
-	fp = fopen ( "_kernel.cl.txt", "r" );
-	if (!fp) // b³¹d, nie wczytuje pliku
-		return 0xfff;
 
-	fseek ( fp, 0, SEEK_END );
-	long length = ftell ( fp );
-	fseek ( fp, 0, SEEK_SET );
-	(*generation)->kernelSrc = (char*)malloc ( length + 1 );
-printf("kernelSrc length: %ld \n", length);
-	if ( (*generation)->kernelSrc )
-		fread ( (*generation)->kernelSrc, 1, length, fp );
-	else
-		return 0xffff;
-	fclose ( fp );
-*/
 	(*generation)->kernelSrc = kernelSRC;
 	size_t kernelSrcLength = strlen ( (*generation)->kernelSrc );
 
@@ -577,28 +618,6 @@ printf("kernelSrc length: %ld \n", length);
 	
 	erro = clSetKernelArg ( (*generation)->kernel, 3, sizeof(png_uint_32), (void*)&(*generation)->height );
 	if (erro)
-		return erro;
-
-	erro = clEnqueueWriteBuffer ( (*generation)->queue,
-								  (*generation)->bufferA,
-								  CL_FALSE, 0,
-								  sizeof(png_byte) *
-										(*generation)->width *
-										(*generation)->height,
-								  (*generation)->arrA,
-								  0, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	erro = clEnqueueWriteBuffer ( (*generation)->queue,
-								  (*generation)->bufferA,
-								  CL_FALSE, 0,
-								  sizeof(png_byte) *
-										(*generation)->width *
-										(*generation)->height,
-								  (*generation)->arrA,
-								  0, NULL, NULL);
-	if ( erro )
 		return erro;
 
 	return GEN_SUCCESS;

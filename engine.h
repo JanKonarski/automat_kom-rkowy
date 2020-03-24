@@ -1,3 +1,10 @@
+/*
+ *
+ * Autor: Jan Konarski
+ * Autor: Maciek Ko³ek
+ *
+ */
+
 #include <stdint.h>
 #include <png.h>
 
@@ -56,11 +63,11 @@ extern "C" {
 
 	} gen_t;
 
-	int gen_create ( gen_t **generation,
-					 uint32_t width,
-					 uint32_t height );
-
 	int gen_destroy ( gen_t *generation );
+
+	int gen_rand ( gen_t **generation,
+				   uint32_t width,
+				   uint32_t height );
 
 	int gen_load ( gen_t **generation,
 				   char *fileName );
