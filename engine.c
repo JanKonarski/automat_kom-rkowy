@@ -320,12 +320,44 @@ int gen_next ( gen_t **generation,
 													y,
 													(*generation)->width,
 													(*generation)->height );
-
+			
 			if ( (*generation)->position )
-				(*generation)->arrayA[y][x] = neighbours == 3 ? alive : death;
+			{
+				if ((*generation)->arrayB[y][x] == alive)
+				{
+					if (neighbours == 2 || neighbours == 3)
+						(*generation)->arrayA[y][x] = alive;
+					else
+						(*generation)->arrayA[y][x] = death;
+				}
+				else
+				{
+					if (neighbours == 3)
+						(*generation)->arrayA[y][x] = alive;
+					else
+						(*generation)->arrayA[y][x] = death;
+				}
+			}
+				
 			else
-				(*generation)->arrayB[y][x] = neighbours == 3 ? alive : death; 
+			{
+				if ( (*generation)->arrayA[y][x] == alive )
+				{
+					if (neighbours == 2 || neighbours == 3)
+						(*generation)->arrayB[y][x] = alive;
+					else
+						(*generation)->arrayB[y][x] = death;
+				}
+				else
+				{
+					if (neighbours == 3)
+						(*generation)->arrayB[y][x] = alive;
+					else
+						(*generation)->arrayB[y][x] = death;
+				}
+			}
 		}
+
 	(*generation)->position++;
 
 	return GEN_SUCCESS;
