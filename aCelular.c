@@ -1,7 +1,7 @@
 /*
  *
  * Autor: Jan Konarski
- * Autor: Maciek Ko³ek
+ * Autor: Maciek KoÂ³ek
  *
  */
 
@@ -30,7 +30,7 @@ int main( int argc, char **argv )
 	wcl cl = WITHOUT_CL;
 	bool gui = false;
 	char* help =
-		"\t-w (wight) <unsigned int> \n" \
+		"\t-w (width) <unsigned int> \n" \
 		"\t-h (height) <unsigned int> \n" \
 		"\t-i (input config) <char *> \n" \
 		"\t-o (output config) <char *> \n" \
