@@ -8,11 +8,7 @@
 #include <stdint.h>
 #include <png.h>
 
-#ifdef __APPLE__
-#include <OpenCL/OpenCL.h>
-#else
-#include <CL/cl.h>
-#endif
+
 
 #ifndef _ENGINE_H_
 #define _ENGINE_H_
@@ -29,8 +25,6 @@ extern "C" {
 #define GEN_READ_CONFIG_FAILURE	-4
 
 
-	typedef enum { WITH_CL, WITHOUT_CL } wcl;
-
 	typedef struct gen
 	{
 
@@ -46,20 +40,6 @@ extern "C" {
 		png_bytep *arrayA;
 		png_bytep *arrayB;
 		png_FILE_p *img_ptr;
-
-		cl_uint platformNums;
-		cl_platform_id *platformIds;
-		cl_uint deviceNums;
-		cl_device_id *deviceIds;
-		cl_context *context;
-		cl_command_queue *queue;
-		cl_program *program;
-		char *kernelSrc;
-		cl_kernel *kernel;
-		unsigned char *arrA;
-		cl_mem *bufferA;
-		unsigned char *arrB;
-		cl_mem *bufferB;
 
 	} gen_t;
 
@@ -78,8 +58,7 @@ extern "C" {
 	int gen_image ( gen_t *generation,
 					char *imageName );
 
-	int gen_next ( gen_t **generation,
-				   wcl cl );
+	int gen_next ( gen_t **generation);
 
 
 #ifdef __cplusplus

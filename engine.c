@@ -17,30 +17,7 @@ typedef unsigned char uchar8_t;
 #define death (char)0xFF
 #define alive (char)0x00
 
-char *kernelSRC =
-	"char get( __global uchar *arr, uint x, uint y, uint width, uint height) {" \
-	"	if (x < 0 || y < 0 || x >= width || y >= height) return 0xFF;" \
-	"	else return arr[y * width + x];" \
-	"}" \
-	"" \
-	"__kernel void process(__global uchar *A, __global uchar *B, uint width, uint height) {" \
-	"	uint index = get_global_id(0);" \
-	"	uint y = (uint)(index / width);" \
-	"	uint x = (uint)(index - y*height);" \
-	"	char count = 0;" \
-	"	" \
-	"	if (!get(A, x-1, y-1, width, height)) count++;" \
-	"	if (!get(A, x-1, y, width, height)) count++;" \
-	"	if (!get(A, x-1, y+1, width, height)) count++;" \
-	"	if (!get(A, x, y-1, width, height)) count++;" \
-	"	if (!get(A, x, y+1, width, height)) count++;" \
-	"	if (!get(A, x+1, y-1, width, height)) count++;" \
-	"	if (!get(A, x+1, y, width, height)) count++;" \
-	"	if (!get(A, x+1, y+1, width, height)) count++;" \
-	"	" \
-	"	if (count == 3) B[index] = 0x00;" \
-	"	else B[index] = 0xFF;" \
-	"}";
+
 
 static uchar8_t count_neighbours ( uchar8_t **arr,
 								   uint32_t x,
@@ -96,20 +73,6 @@ static int gen_create ( gen_t **generation,
 	(*generation)->bit_depth = 8;
 	(*generation)->img_ptr = NULL;
 
-	(*generation)->platformNums = 0;
-	(*generation)->platformIds = NULL;
-	(*generation)->deviceNums = 0;
-	(*generation)->deviceIds = NULL;
-	(*generation)->context = NULL;
-	(*generation)->queue = NULL;
-	(*generation)->program = NULL;
-	(*generation)->kernelSrc = NULL;
-	(*generation)->kernel = NULL;
-	(*generation)->arrA = NULL;
-	(*generation)->bufferA = NULL;
-	(*generation)->arrB = NULL;
-	(*generation)->bufferB = NULL;
-
 	return GEN_SUCCESS;
 }
 
@@ -128,38 +91,6 @@ int gen_destroy ( gen_t *generation )
 	}
 	free( generation->arrayA );
 	free( generation->arrayB );
-
-	free( generation->arrA );
-	free( generation->arrB );
-
-	cl_int error;
-
-	if ( !generation->queue )
-		clFlush( generation->queue );
-
-	if ( !generation->queue)
-		clFinish( generation->queue );
-
-	if ( !generation->deviceIds)
-		clReleaseDevice( generation->deviceIds );
-
-	if ( !generation->kernel)
-		clReleaseKernel( generation->kernel );
-
-	if ( !generation->program)
-		clReleaseProgram( generation->program );
-
-	if ( !generation->context)
-		clReleaseContext( generation->context );
-
-	if ( !generation->bufferA)
-		clReleaseMemObject( generation->bufferA );
-
-	if ( !generation->bufferB)
-		clReleaseMemObject( generation->bufferB );
-
-	if ( !generation->queue)
-		clReleaseCommandQueue( generation->queue );
 
 //	free( generation->platformIds );
 //	free( generation->deviceIds );
@@ -300,14 +231,10 @@ int gen_image ( gen_t *generation,
 	return GEN_SUCCESS;
 }
 
-int gen_next ( gen_t **generation,
-			   wcl cl)
+int gen_next ( gen_t **generation)
 {
 	if ( !(*generation) )
 		return 0xff;
-
-	if ( cl == WITH_CL )
-		return gen_nextCL ( generation );
 
 	uint32_t x, y;
 	for ( x = 0; x < (*generation)->width; x++ )
@@ -387,270 +314,4 @@ static uchar8_t count_neighbours( uchar8_t **arr,
 
 
 	return count;
-}
-
-static int32_t gen_nextCL ( gen_t **generation )
-{
-	if ( !(*generation) )
-		return 0xff;
-
-	if ( !(*generation)->platformIds ||
-		 !(*generation)->deviceIds ||
-		 !(*generation)->context ||
-		 !(*generation)->queue ||
-		 !(*generation)->program ||
-		 !(*generation)->kernelSrc ||
-		 !(*generation)->kernel ||
-		 !(*generation)->bufferA ||
-		 !(*generation)->bufferB )
-	{
-		uint32_t erro = GEN_SUCCESS;
-		erro = gen_setCL( generation );
-		if ( erro )
-			return erro;
-	}
-
-	cl_int erro = CL_SUCCESS;
-	size_t size = (size_t)(*generation)->width * (size_t)(*generation)->height;
-
-	erro = clEnqueueWriteBuffer( (*generation)->queue,
-								 (*generation)->bufferA,
-								 CL_FALSE, 0,
-								 sizeof(png_byte) *
-										(*generation)->width *
-										(*generation)->height,
-								(*generation)->position ?
-										(*generation)->arrB :
-										(*generation)->arrA,
-								0, NULL, NULL);
-	if (erro)
-		return erro;
-
-	erro = clEnqueueWriteBuffer( (*generation)->queue,
-								 (*generation)->bufferB,
-								 CL_FALSE, 0,
-								 sizeof(png_byte) * 
-										(*generation)->width *
-										(*generation)->height,
-								 (*generation)->position ?
-										(*generation)->arrA :
-										(*generation)->arrB,
-								 0, NULL, NULL);
-	if (erro)
-		return erro;
-
-	size_t localWorkSize = 1;
-
-	erro = clEnqueueNDRangeKernel ( (*generation)->queue,
-									(*generation)->kernel,
-									1, NULL,
-									&size, &localWorkSize,
-									0, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	erro = clEnqueueReadBuffer ( (*generation)->queue,
-								 (*generation)->bufferA,
-								 CL_TRUE, 0,
-								 sizeof( png_byte ) * size,
-								 (*generation)->arrA,
-								 0, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	{
-		size_t x, y;
-		for ( x = 0; x < (*generation)->width; x++ )
-			for ( y = 0; y < (*generation)->height; y++ )
-				(*generation)->arrayA[y][x] =
-						(*generation)->arrA[y * (*generation)->width + x];
-	}
-
-
-	erro = clEnqueueReadBuffer ( (*generation)->queue,
-								 (*generation)->bufferB,
-								 CL_TRUE, 0,
-								 sizeof( png_byte ) * size,
-								 (*generation)->arrB,
-								 0, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	{
-		size_t x, y;
-		for ( x = 0; x < (*generation)->width; x++ )
-			for ( y = 0; y < (*generation)->height; y++ )
-				(*generation)->arrayB[y][x] =
-				(*generation)->arrB[y * (*generation)->width + x];
-	}
-
-	(*generation)->position++;
-
-	return GEN_SUCCESS;
-}
-
-static int32_t gen_setCL ( gen_t **generation )
-{
-	if ( !(*generation) )
-		return 0xf0;
-	
-	cl_int erro = CL_SUCCESS;
-	uint32_t i;
-	char name[1024] = { '\0' };
-
-	erro = clGetPlatformIDs ( 0, NULL, &(*generation)->platformNums );
-	if ( erro || !(*generation)->platformNums )
-		return erro;
-
-	(*generation)->platformIds = (cl_platform_id*)malloc( sizeof ( cl_platform_id ) * (*generation)->platformNums );
-	erro = clGetPlatformIDs ( (*generation)->platformNums, (*generation)->platformIds, NULL );
-	if ( erro )
-		return erro;
-
-	for ( i = 0; i < (*generation)->platformNums; i++ )
-	{
-		printf ( "Platform:\t%u \n", i );
-
-		erro = clGetPlatformInfo ( (*generation)->platformIds[i], CL_PLATFORM_NAME, 1024, &name, NULL );
-		printf ( "Name:\t\t%s \n", erro ? "null" : name );
-
-		erro = clGetPlatformInfo ( (*generation)->platformIds[i], CL_PLATFORM_VENDOR, 1024, &name, NULL );
-		printf ( "Vendor:\t\t%s \n\n", erro ? "null" : name );
-	}
-
-	cl_int platform = 0;
-	printf ( "Choose the platform: " );
-	scanf ( "%d", &platform );
-	if ( platform > (*generation)->platformNums )
-		platform = 0;
-	printf ( "-------------------------------------\n\n" );
-
-	erro = clGetDeviceIDs( (*generation)->platformIds[platform],
-						   CL_DEVICE_TYPE_ALL, 0, NULL,
-						   &(*generation)->deviceNums );
-	if ( erro || !(*generation)->deviceNums )
-		return erro;
-
-	(*generation)->deviceIds = (cl_device_id*)malloc ( sizeof ( cl_device_id ) * (*generation)->deviceNums );
-	erro = clGetDeviceIDs ( (*generation)->platformIds[platform],
-							CL_DEVICE_TYPE_ALL,
-							(*generation)->deviceNums,
-							(*generation)->deviceIds,
-							&(*generation)->deviceNums );
-	if ( erro )
-		return erro;
-
-	for ( i = 0; i < (*generation)->deviceNums; ++i )
-	{
-		printf ( "Device:\t\t%u \n", i );
-
-		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_NAME, 1024, &name, NULL );
-		printf ( "Name:\t\t%s \n", erro ? "null" : name );
-
-		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_VENDOR, 1024, &name, NULL );
-		printf ( "Vendor:\t\t%s \n", erro ? "null" : name );
-
-		erro = clGetDeviceInfo ( (*generation)->deviceIds[i], CL_DEVICE_VERSION, 1024, &name, NULL );
-		printf ( "Version:\t%s \n\n", erro ? "null" : name );
-	}
-
-	cl_int device = 0;
-	printf ( "Choose the platform: " );
-	scanf ( "%d", &device );
-	if ( device > (*generation)->deviceNums )
-		device = 0;
-	printf("-------------------------------------\n\n");
-	
-	(*generation)->context = clCreateContext ( NULL, (*generation)->deviceNums,
-											   (*generation)->deviceIds,
-											   NULL, NULL, &erro );
-	if ( erro )
-		return erro;
-	
-	(*generation)->queue = clCreateCommandQueue ( (*generation)->context, (*generation)->deviceIds[device], 0, &erro );
-	if ( erro )
-		return erro;
-	
-	{
-		(*generation)->arrA = (png_byte*)malloc( sizeof( png_byte ) *
-												(*generation)->width *
-												(*generation)->height);
-
-		size_t x, y;
-		for ( x = 0; x < (*generation)->width; x++ )
-			for ( y = 0; y < (*generation)->height; y++ )
-				(*generation)->arrA[y * (*generation)->width + x] =
-						(*generation)->arrayA[y][x];
-	}
-
-	(*generation)->bufferA = clCreateBuffer ( (*generation)->context,
-											  CL_MEM_READ_WRITE,
-											  sizeof( png_byte ) * 
-													(size_t)(*generation)->width * 
-													(size_t)(*generation)->height,
-											  NULL,
-											  &erro );
-	if ( erro )
-		return erro;
-
-	{
-		(*generation)->arrB = (png_byte*)malloc( sizeof( png_byte ) *
-												 (*generation)->width *
-												 (*generation)->height);
-
-		size_t x, y;
-		for ( x = 0; x < (*generation)->width; x++ )
-			for ( y = 0; y < (*generation)->height; y++ )
-				(*generation)->arrB[y * (*generation)->width + x] =
-						(*generation)->arrayB[y][x];
-	}
-
-	(*generation)->bufferB = clCreateBuffer ( (*generation)->context,
-											  CL_MEM_READ_WRITE,
-											  sizeof(png_byte) *
-													(*generation)->width *
-													(*generation)->height,
-											  NULL,
-											  &erro);
-	if ( erro )
-		return erro;
-
-	(*generation)->kernelSrc = kernelSRC;
-	size_t kernelSrcLength = strlen ( (*generation)->kernelSrc );
-
-	(*generation)->program = clCreateProgramWithSource ( (*generation)->context, 1,
-														 (const char**)&(*generation)->kernelSrc,
-														 (const size_t*)&kernelSrcLength,
-														 &erro );
-	if ( erro )
-		return erro;
-
-	erro = clBuildProgram ( (*generation)->program,
-							(*generation)->deviceNums,
-							(*generation)->deviceIds,
-							NULL, NULL, NULL );
-	if ( erro )
-		return erro;
-
-	(*generation)->kernel = clCreateKernel ( (*generation)->program, "process", &erro );
-	if ( erro )
-		return erro;
-
-	erro = clSetKernelArg ( (*generation)->kernel, 0, sizeof(cl_mem), (void*)&(*generation)->bufferA );
-	if ( erro )
-		return erro;
-
-	erro = clSetKernelArg ( (*generation)->kernel, 1, sizeof(cl_mem), (void*)&(*generation)->bufferB );
-	if ( erro )
-		return erro;
-	
-	erro = clSetKernelArg ( (*generation)->kernel, 2, sizeof(png_uint_32), (void*)&(*generation)->width );
-	if ( erro )
-		return erro;
-	
-	erro = clSetKernelArg ( (*generation)->kernel, 3, sizeof(png_uint_32), (void*)&(*generation)->height );
-	if (erro)
-		return erro;
-
-	return GEN_SUCCESS;
 }

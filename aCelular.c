@@ -27,7 +27,6 @@ int main( int argc, char **argv )
 	char *output_fileName = NULL;
 	char *prefix_imageName = NULL;
 	uint32_t loops = 0;
-	wcl cl = WITHOUT_CL;
 	bool gui = false;
 	char* help =
 		"\t-w (width) <unsigned int> \n" \
@@ -35,8 +34,7 @@ int main( int argc, char **argv )
 		"\t-i (input config) <char *> \n" \
 		"\t-o (output config) <char *> \n" \
 		"\t-p (image name prefix) <char *> \n" \
-		"\t-l (loops) <unsigned int> \n" \
-		"\t-c (OpenCL) [WITH_CL | WITHOUT_CL]\n";
+		"\t-l (loops) <unsigned int> \n";
 
 	size_t i;
 	for ( i = 1; i < argc; )
@@ -79,11 +77,6 @@ int main( int argc, char **argv )
 			i++;
 			break;
 
-		case 'c':
-			cl = strcmp ( argv[++i], "WITH_CL" ) == 0 ? WITH_CL : WITHOUT_CL;
-			i++;
-			break;
-
 		default:
 			printf( "Invalid syntax \n" );
 			return EXIT_FAILURE;
@@ -114,7 +107,7 @@ int main( int argc, char **argv )
 	char value[11];
 	for ( k = 0; k < loops; k++ )
 	{
-		erro = gen_next ( &gen, cl ? WITHOUT_CL : WITH_CL );
+		erro = gen_next ( &gen);
 		if ( erro ) return erro;
 
 		sprintf( value, "%lu", k+1 );
